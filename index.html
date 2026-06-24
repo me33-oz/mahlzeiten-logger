@@ -313,6 +313,19 @@
       </div>
     </div>
     <div style="height:16px"></div>
+
+    <!-- DEBUG LOG VIEWER -->
+    <div style="margin-top:8px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--tx2);margin-bottom:8px">🐛 Debug Log</div>
+    <div class="s-group">
+      <div class="s-row" style="display:flex;gap:8px">
+        <button class="now-btn" id="debug-copy" style="flex:1;text-align:center">📋 Logs kopieren</button>
+        <button class="now-btn" id="debug-clear" style="color:var(--err)">Löschen</button>
+      </div>
+      <div id="debug-log-view" style="padding:12px 16px;font-size:11px;font-family:monospace;color:var(--tx2);max-height:300px;overflow-y:auto;line-height:1.6;word-break:break-all">
+        <em>Noch keine Logs</em>
+      </div>
+    </div>
+    <div style="height:16px"></div>
   </div>
 
 </div>
@@ -334,8 +347,45 @@
 
 <script>
 // ─── CONFIG ────────────────────────────────────────────────────
-const DB_ID = '6349981b6325-4e39-ad13-1d7fcb9d22b7'.replace('-','');
-// Notion DB: Mahlzeiten
+const DB_ID       = '6edd98ec-9ddf-45f4-8e75-f20465329067'; // Mahlzeiten DB (REST API page ID)
+const DEBUG_PAGE  = '38923fdc-c6d9-811d-8de3-d4b0cf963336'; // 🐛 App Debug Log page
+
+// ─── DEBUG LOG ─────────────────────────────────────────────────
+const LOG_KEY = 'ml_debuglog';
+
+function dlog(event, data) {
+  const entry = { ts: new Date().toISOString(), event, ...data };
+  const logs = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+  logs.unshift(entry);
+  if (logs.length > 50) logs.length = 50;
+  localStorage.setItem(LOG_KEY, JSON.stringify(logs));
+  console.log('[ML]', event, data);
+  return entry;
+}
+
+// Write error to Notion debug page (fire-and-forget, best effort)
+async function logToNotion(entry) {
+  const { notion, proxy } = S();
+  if (!notion) return;
+  const base = proxy ? proxy.replace(/\/$/,'') : 'https://api.notion.com';
+  const text = `[${entry.ts}] ${entry.event}\n${JSON.stringify(entry, null, 2)}`;
+  try {
+    await fetch(`${base}/v1/blocks/${DEBUG_PAGE}/children`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${notion}`,
+        'Content-Type': 'application/json',
+        'Notion-Version': '2022-06-28'
+      },
+      body: JSON.stringify({
+        children: [{
+          type: 'code',
+          code: { rich_text: [{ type: 'text', text: { content: text.slice(0, 1900) } }], language: 'plain text' }
+        }]
+      })
+    });
+  } catch(e) { /* silent */ }
+}
 
 // ─── SETTINGS ──────────────────────────────────────────────────
 const get = k => localStorage.getItem(k) || '';
@@ -357,7 +407,7 @@ document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () =>
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.dataset.tab === id));
   document.querySelectorAll('.screen').forEach(x => x.classList.toggle('on', x.id === 's-'+id));
   if (id === 'hist') renderHist();
-  if (id === 'set')  loadSetUI();
+  if (id === 'set')  { loadSetUI(); renderDebugLog(); }
 }));
 
 // ─── DATETIME ──────────────────────────────────────────────────
@@ -411,27 +461,39 @@ camIn.addEventListener('change', async e => {
 });
 
 async function groqVision(b64, model, key) {
-  const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model,
-      messages: [{
-        role: 'user',
-        content: [
-          { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}` } },
-          { type: 'text', text: 'Beschreibe diese Mahlzeit auf Deutsch in 1-2 Sätzen für ein Ernährungs-Symptomtagebuch. Nenne konkrete Lebensmittel und Mengen wenn erkennbar. Nur die Beschreibung, kein anderer Text.' }
-        ]
-      }],
-      max_tokens: 200, temperature: 0.3
-    })
-  });
+  dlog('groq_request', { model, imageSize: b64.length });
+  let r;
+  try {
+    r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}` } },
+            { type: 'text', text: 'Beschreibe diese Mahlzeit auf Deutsch in 1-2 Sätzen für ein Ernährungs-Symptomtagebuch. Nenne konkrete Lebensmittel und Mengen wenn erkennbar. Nur die Beschreibung, kein anderer Text.' }
+          ]
+        }],
+        max_tokens: 200, temperature: 0.3
+      })
+    });
+  } catch(e) {
+    const entry = dlog('groq_network_error', { error: e.message });
+    logToNotion(entry);
+    throw new Error('Netzwerkfehler Groq: ' + e.message);
+  }
   if (!r.ok) {
     const e = await r.json().catch(()=>({}));
+    const entry = dlog('groq_api_error', { status: r.status, body: e });
+    logToNotion(entry);
     throw new Error(e.error?.message || `HTTP ${r.status}`);
   }
   const d = await r.json();
-  return d.choices?.[0]?.message?.content?.trim() || '';
+  const result = d.choices?.[0]?.message?.content?.trim() || '';
+  dlog('groq_ok', { result });
+  return result;
 }
 
 // ─── SAVE ──────────────────────────────────────────────────────
@@ -451,12 +513,16 @@ document.getElementById('save-btn').addEventListener('click', async () => {
   let synced = false;
   let errMsg = '';
 
+  dlog('save_attempt', { txt, iso, hasNotion: !!notion, hasProxy: !!proxy });
   if (notion) {
     try {
       await notionCreate(txt, iso, notion, proxy);
       synced = true;
+      dlog('notion_ok', { txt });
     } catch(e) {
       errMsg = e.message;
+      const entry = dlog('notion_error', { error: e.message, txt, iso });
+      logToNotion(entry);
     }
   }
 
@@ -495,6 +561,8 @@ async function notionCreate(txt, iso, token, proxyUrl) {
     }
   };
 
+  dlog('notion_request', { url, db: DB_ID, iso });
+
   let r;
   try {
     r = await fetch(url, {
@@ -507,11 +575,15 @@ async function notionCreate(txt, iso, token, proxyUrl) {
       body: JSON.stringify(body)
     });
   } catch(e) {
+    dlog('notion_fetch_error', { error: e.message, url });
     throw new Error('Netzwerkfehler – Proxy-URL nötig (CORS)');
   }
 
+  dlog('notion_response', { status: r.status, ok: r.ok });
+
   if (!r.ok) {
     const e = await r.json().catch(()=>({}));
+    dlog('notion_response_body', { status: r.status, body: e });
     throw new Error(e.message || `HTTP ${r.status}`);
   }
   return r.json();
@@ -555,6 +627,32 @@ function loadSetUI() {
   document.getElementById('s-notion').value = s.notion;
   document.getElementById('s-proxy').value = s.proxy;
 }
+
+// ─── DEBUG LOG VIEWER ──────────────────────────────────────────
+function renderDebugLog() {
+  const logs = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+  const el = document.getElementById('debug-log-view');
+  if (!logs.length) { el.innerHTML = '<em>Noch keine Logs</em>'; return; }
+  el.innerHTML = logs.map(e =>
+    `<div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--bdr)">` +
+    `<span style="color:var(--ac-lt)">${e.ts.slice(11,19)}</span> ` +
+    `<strong style="color:var(--tx)">${e.event}</strong><br>` +
+    JSON.stringify(e, null, 0).replace(/^{|}$/g,'').replace(/,"ts":"[^"]+","event":"[^"]+",?/,'').slice(0,300) +
+    `</div>`
+  ).join('');
+}
+
+document.getElementById('debug-copy').addEventListener('click', () => {
+  const logs = JSON.parse(localStorage.getItem(LOG_KEY) || '[]');
+  const text = logs.map(e => `[${e.ts}] ${e.event}\n${JSON.stringify(e, null, 2)}`).join('\n\n---\n\n');
+  navigator.clipboard.writeText(text || 'Keine Logs').then(() => toast('📋 Logs kopiert', 'ok'));
+});
+
+document.getElementById('debug-clear').addEventListener('click', () => {
+  localStorage.removeItem(LOG_KEY);
+  renderDebugLog();
+  toast('Log gelöscht', '');
+});
 
 document.getElementById('set-save').addEventListener('click', () => {
   localStorage.setItem('ml_groq',   document.getElementById('s-groq').value.trim());
