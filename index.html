@@ -141,6 +141,14 @@
       font-family:inherit;cursor:pointer;transition:all .15s;
     }
     .btn-sec:active{transform:scale(.98);background:var(--bg4)}
+    .sym-chip{
+      background:var(--bg3);color:var(--tx);border:1px solid var(--bdr);
+      border-radius:10px;padding:9px 14px;font-size:15px;font-weight:600;
+      font-family:inherit;cursor:pointer;transition:all .15s;min-width:44px;
+    }
+    .sym-chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+    .sym-chip:active{transform:scale(.96)}
+    .sym-chip-wide{width:100%;text-align:left;border-radius:12px;padding:11px 14px;font-size:14px}
     .btn.secondary{background:var(--bg3);color:var(--tx2);margin-top:10px}
 
     /* ── SPINNER ── */
@@ -257,6 +265,37 @@
     <div id="hist-list"></div>
   </div>
 
+  <!-- ── SYMPTOME ── -->
+  <div class="screen" id="s-sym">
+    <div class="field-lbl">Datum</div>
+    <div class="row">
+      <label class="dt-wrap" style="flex:1">
+        <input type="date" id="sym-date">
+      </label>
+      <button class="now-btn" id="sym-today">Heute</button>
+    </div>
+
+    <div class="field-lbl" style="margin-top:20px">Bauchschmerzen <span id="bauch-val" style="color:var(--ac-lt);font-weight:700">–</span></div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px" id="bauch-btns">
+      <!-- filled by JS -->
+    </div>
+
+    <div class="field-lbl" style="margin-top:20px">Stuhl (Bristol-Skala)</div>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px" id="stuhl-btns">
+      <!-- filled by JS -->
+    </div>
+
+    <div class="field-lbl" style="margin-top:20px">Notizen</div>
+    <textarea id="sym-notes" placeholder="Beschwerden, Auffälligkeiten…" rows="3" style="margin-top:6px"></textarea>
+
+    <div id="sym-status" style="font-size:13px;color:var(--tx2);margin-top:10px;min-height:18px"></div>
+
+    <div style="margin-top:16px">
+      <button class="btn" id="sym-save">Speichern</button>
+    </div>
+    <div style="height:8px"></div>
+  </div>
+
   <!-- ── SETTINGS ── -->
   <div class="screen" id="s-set">
     <div class="info">
@@ -344,7 +383,10 @@
 <!-- TABS -->
 <div class="tabs">
   <button class="tab on" data-tab="log">
-    <span class="tab-ic">✏️</span><span>Eintragen</span>
+    <span class="tab-ic">✏️</span><span>Mahlzeit</span>
+  </button>
+  <button class="tab" data-tab="sym">
+    <span class="tab-ic">🩺</span><span>Symptome</span>
   </button>
   <button class="tab" data-tab="hist">
     <span class="tab-ic">📋</span><span>Verlauf</span>
@@ -419,6 +461,7 @@ document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () =>
   document.querySelectorAll('.screen').forEach(x => x.classList.toggle('on', x.id === 's-'+id));
   if (id === 'hist') renderHist();
   if (id === 'set')  { loadSetUI(); renderDebugLog(); }
+  if (id === 'sym')  initSym();
 }));
 
 // ─── DATETIME ──────────────────────────────────────────────────
@@ -699,6 +742,129 @@ document.getElementById('debug-clear').addEventListener('click', () => {
   localStorage.removeItem(LOG_KEY);
   renderDebugLog();
   toast('Log gelöscht', '');
+});
+
+// ─── SYMPTOME ──────────────────────────────────────────────────
+const TAGES_DB_ID  = 'd82a76e2-8753-4fbc-815c-cfe4052f550d';
+const STUHL_OPTS = [
+  'Typ 1 – harte Klümpchen',
+  'Typ 2 – klumpig wurstförmig',
+  'Typ 3 – wurstförmig rissig',
+  'Typ 4 – glatt & weich (ideal)',
+  'Typ 5 – weiche Klümpchen',
+  'Typ 6 – breiig flockig',
+  'Typ 7 – flüssig'
+];
+
+let symBauch = null, symStuhl = null;
+
+function initSym() {
+  // set today's date
+  const todayStr = new Date().toISOString().slice(0,10);
+  const dateEl = document.getElementById('sym-date');
+  if (!dateEl.value) dateEl.value = todayStr;
+
+  // bauchschmerzen buttons 0-10
+  const bauchEl = document.getElementById('bauch-btns');
+  if (!bauchEl.dataset.built) {
+    bauchEl.dataset.built = '1';
+    for (let i = 0; i <= 10; i++) {
+      const b = document.createElement('button');
+      b.className = 'sym-chip';
+      b.textContent = i;
+      b.dataset.val = i;
+      b.addEventListener('click', () => {
+        symBauch = String(i);
+        document.querySelectorAll('#bauch-btns .sym-chip').forEach(x => x.classList.toggle('on', x.dataset.val == i));
+        document.getElementById('bauch-val').textContent = i;
+      });
+      bauchEl.appendChild(b);
+    }
+  }
+
+  // stuhl buttons
+  const stuhlEl = document.getElementById('stuhl-btns');
+  if (!stuhlEl.dataset.built) {
+    stuhlEl.dataset.built = '1';
+    STUHL_OPTS.forEach(opt => {
+      const b = document.createElement('button');
+      b.className = 'sym-chip sym-chip-wide';
+      b.textContent = opt;
+      b.dataset.val = opt;
+      b.addEventListener('click', () => {
+        symStuhl = opt;
+        document.querySelectorAll('#stuhl-btns .sym-chip').forEach(x => x.classList.toggle('on', x.dataset.val === opt));
+      });
+      stuhlEl.appendChild(b);
+    });
+  }
+
+  document.getElementById('sym-status').textContent = '';
+}
+
+document.getElementById('sym-today').addEventListener('click', () => {
+  document.getElementById('sym-date').value = new Date().toISOString().slice(0,10);
+});
+
+document.getElementById('sym-save').addEventListener('click', async () => {
+  const { notion, proxy } = S();
+  if (!notion) { toast('Notion Token fehlt – bitte in Einstellungen eintragen', 'err'); return; }
+  const dateStr = document.getElementById('sym-date').value;
+  if (!dateStr) { toast('Bitte Datum wählen', 'err'); return; }
+  const notes = document.getElementById('sym-notes').value.trim();
+  if (!symBauch && !symStuhl && !notes) { toast('Bitte mindestens ein Feld ausfüllen', 'err'); return; }
+
+  const btn = document.getElementById('sym-save');
+  btn.disabled = true; btn.textContent = 'Speichern…';
+  document.getElementById('sym-status').textContent = 'Suche bestehenden Eintrag…';
+
+  try {
+    const base = proxy ? proxy.replace(/\/$/, '') : 'https://api.notion.com';
+    const headers = { 'Authorization': `Bearer ${notion}`, 'Content-Type': 'application/json', 'Notion-Version': '2022-06-28' };
+
+    // query for existing entry with this date
+    const qRes = await fetch(`${base}/v1/databases/${TAGES_DB_ID}/query`, {
+      method: 'POST', headers,
+      body: JSON.stringify({ filter: { property: 'Datum', date: { equals: dateStr } }, page_size: 1 })
+    });
+    const qData = await qRes.json();
+    const existing = qData.results?.[0];
+
+    const props = {};
+    if (symBauch !== null) props['Bauchschmerzen (0–10)'] = { select: { name: symBauch } };
+    if (symStuhl)          props['Stuhl (Bristol)']           = { select: { name: symStuhl } };
+    if (notes)             props['Notizen']                   = { rich_text: [{ text: { content: notes } }] };
+
+    if (existing) {
+      // UPDATE existing page
+      document.getElementById('sym-status').textContent = 'Aktualisiere Eintrag…';
+      await fetch(`${base}/v1/pages/${existing.id}`, { method: 'PATCH', headers, body: JSON.stringify({ properties: props }) });
+      toast('✓ Tageseintrag aktualisiert', 'ok');
+    } else {
+      // CREATE new page
+      document.getElementById('sym-status').textContent = 'Erstelle neuen Eintrag…';
+      const d = new Date(dateStr + 'T12:00:00');
+      const dd = String(d.getDate()).padStart(2,'0');
+      const mm = String(d.getMonth()+1).padStart(2,'0');
+      const yyyy = d.getFullYear();
+      props['Tag']   = { title: [{ text: { content: `${dd}.${mm}.${yyyy}` } }] };
+      props['Datum'] = { date: { start: dateStr } };
+      await fetch(`${base}/v1/pages`, { method: 'POST', headers, body: JSON.stringify({ parent: { database_id: TAGES_DB_ID }, properties: props }) });
+      toast('✓ Neuer Tageseintrag angelegt', 'ok');
+    }
+
+    document.getElementById('sym-status').textContent = '';
+    // reset selections
+    symBauch = null; symStuhl = null;
+    document.querySelectorAll('.sym-chip').forEach(x => x.classList.remove('on'));
+    document.getElementById('bauch-val').textContent = '–';
+    document.getElementById('sym-notes').value = '';
+  } catch(e) {
+    toast('Fehler: ' + e.message.slice(0,60), 'err');
+    document.getElementById('sym-status').textContent = '';
+  } finally {
+    btn.disabled = false; btn.textContent = 'Speichern';
+  }
 });
 
 document.getElementById('set-save').addEventListener('click', () => {
