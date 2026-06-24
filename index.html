@@ -135,6 +135,12 @@
     }
     .btn:active{transform:scale(.98);opacity:.9}
     .btn:disabled{opacity:.35;cursor:not-allowed;transform:none}
+    .btn-sec{
+      background:var(--bg3);color:var(--tx);border:1px solid var(--bdr);
+      border-radius:14px;padding:11px;font-size:14px;font-weight:600;
+      font-family:inherit;cursor:pointer;transition:all .15s;
+    }
+    .btn-sec:active{transform:scale(.98);background:var(--bg4)}
     .btn.secondary{background:var(--bg3);color:var(--tx2);margin-top:10px}
 
     /* ── SPINNER ── */
@@ -218,7 +224,12 @@
         <div class="photo-lbl">Foto machen</div>
       </div>
     </div>
+    <div style="display:flex;gap:8px;margin-top:10px" id="photo-btns">
+      <button class="btn-sec" id="btn-gallery" style="flex:1">🖼️ Galerie</button>
+      <button class="btn-sec" id="btn-retry" style="flex:1;display:none">🔄 Neu analysieren</button>
+    </div>
     <input type="file" id="cam-in" accept="image/*" capture="environment">
+    <input type="file" id="gal-in" accept="image/*">
 
     <div class="divider">oder Freitext / Diktat</div>
 
@@ -391,7 +402,7 @@ async function logToNotion(entry) {
 const get = k => localStorage.getItem(k) || '';
 const S = () => ({
   groq:    get('ml_groq'),
-  model:   get('ml_model') || 'qwen/qwen3.6-27b',
+  model:   get('ml_model') || 'meta-llama/llama-4-scout-17b-16e-instruct',
   notion:  get('ml_notion'),
   proxy:   get('ml_proxy'),
 });
@@ -423,41 +434,57 @@ let imgB64 = null;
 const photoWrap = document.getElementById('photo-wrap');
 const photoInner = document.getElementById('photo-inner');
 const camIn = document.getElementById('cam-in');
+const galIn = document.getElementById('gal-in');
+const btnRetry = document.getElementById('btn-retry');
 
 photoWrap.addEventListener('click', () => camIn.click());
+document.getElementById('btn-gallery').addEventListener('click', () => galIn.click());
+btnRetry.addEventListener('click', () => runVision());
 
-camIn.addEventListener('change', async e => {
-  const file = e.target.files?.[0];
-  e.target.value = '';
+async function handleImageFile(file) {
   if (!file) return;
-
   const { groq, model } = S();
   if (!groq) { toast('⚙️ Groq API Key fehlt – bitte in Einstellungen eintragen', 'err'); return; }
-
   const reader = new FileReader();
   reader.onload = async ev => {
     const data = ev.target.result;
     imgB64 = data.split(',')[1];
-
-    // Show preview
     let img = photoWrap.querySelector('img');
     if (!img) { img = document.createElement('img'); photoWrap.prepend(img); }
     img.src = data;
     photoWrap.classList.add('has-img');
-    photoInner.innerHTML = '<div class="photo-lbl pulsing">🤖 KI analysiert…</div>';
-
-    try {
-      const txt = await groqVision(imgB64, model, groq);
-      document.getElementById('meal-txt').value = txt;
-      document.getElementById('ai-badge').style.display = 'block';
-      photoInner.innerHTML = '<div class="photo-lbl">📷 Foto ändern</div>';
-      toast('✓ Mahlzeit erkannt', 'ok');
-    } catch(err) {
-      photoInner.innerHTML = '<div class="photo-lbl">📷 Foto ändern</div>';
-      toast('Analyse fehlgeschlagen: ' + err.message.slice(0,60), 'err');
-    }
+    await runVision();
   };
   reader.readAsDataURL(file);
+}
+
+async function runVision() {
+  const { groq, model } = S();
+  if (!imgB64) return;
+  if (!groq) { toast('⚙️ Groq API Key fehlt', 'err'); return; }
+  photoInner.innerHTML = '<div class="photo-lbl pulsing">🤖 KI analysiert…</div>';
+  btnRetry.style.display = 'none';
+  try {
+    const txt = await groqVision(imgB64, model, groq);
+    document.getElementById('meal-txt').value = txt;
+    document.getElementById('ai-badge').style.display = 'block';
+    photoInner.innerHTML = '<div class="photo-lbl">📷 Foto ändern</div>';
+    btnRetry.style.display = '';
+    toast('✓ Mahlzeit erkannt', 'ok');
+  } catch(err) {
+    photoInner.innerHTML = '<div class="photo-lbl">📷 Foto ändern</div>';
+    btnRetry.style.display = imgB64 ? '' : 'none';
+    toast('Analyse fehlgeschlagen: ' + err.message.slice(0,60), 'err');
+  }
+}
+
+camIn.addEventListener('change', async e => {
+  const file = e.target.files?.[0]; e.target.value = '';
+  await handleImageFile(file);
+});
+galIn.addEventListener('change', async e => {
+  const file = e.target.files?.[0]; e.target.value = '';
+  await handleImageFile(file);
 });
 
 async function groqVision(b64, model, key) {
@@ -476,7 +503,7 @@ async function groqVision(b64, model, key) {
             { type: 'text', text: 'Was ist auf dem Bild zu essen? Antworte auf Deutsch, kurz und direkt – nur die Lebensmittel mit grober Menge (z.B. "2 Bananen", "eine Schale Reis mit rotem Curry und Gemüse", "ein Cappuccino"). Keine Sätze, keine Erklärungen, keine Aufgabenbeschreibung. Nur die Mahlzeit.' }
           ]
         }],
-        max_tokens: 200, temperature: 0.3
+        max_tokens: 80, temperature: 0.1
       })
     });
   } catch(e) {
@@ -491,7 +518,8 @@ async function groqVision(b64, model, key) {
     throw new Error(e.error?.message || `HTTP ${r.status}`);
   }
   const d = await r.json();
-  const result = d.choices?.[0]?.message?.content?.trim() || '';
+  const raw = d.choices?.[0]?.message?.content || '';
+  const result = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
   dlog('groq_ok', { result });
   return result;
 }
