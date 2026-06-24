@@ -608,15 +608,34 @@ function renderHist() {
   el.innerHTML = Object.entries(groups).map(([day, entries]) => `
     <div class="day-grp">
       <div class="day-hdr">${day}</div>
-      ${entries.map(e => `
+      ${entries.map((e, i) => `
         <div class="meal-card">
           <div class="meal-time">${new Date(e.time).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}</div>
           <div class="meal-txt">${e.txt}</div>
-          <div class="meal-st">${e.synced ? '✅' : '📱'}</div>
+          <div class="meal-st">
+            ${e.synced ? '✅' : `<button onclick="retrySyncEntry('${e.time}')" style="background:rgba(124,111,247,.2);border:1px solid var(--accent);color:var(--ac-lt);border-radius:8px;padding:3px 8px;font-size:12px;cursor:pointer">☁️ Sync</button>`}
+          </div>
         </div>
       `).join('')}
     </div>
   `).join('');
+}
+
+async function retrySyncEntry(time) {
+  const { notion, proxy } = S();
+  if (!notion) { toast('Kein Notion Token eingetragen', 'err'); return; }
+  const list = JSON.parse(localStorage.getItem('ml_hist') || '[]');
+  const entry = list.find(e => e.time === time);
+  if (!entry) return;
+  try {
+    await notionCreate(entry.txt, new Date(entry.time).toISOString(), notion, proxy);
+    entry.synced = true;
+    localStorage.setItem('ml_hist', JSON.stringify(list));
+    toast('✓ In Notion synchronisiert!', 'ok');
+    renderHist();
+  } catch(e) {
+    toast('Sync fehlgeschlagen: ' + e.message.slice(0,40), 'err');
+  }
 }
 
 // ─── SETTINGS UI ───────────────────────────────────────────────
