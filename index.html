@@ -473,7 +473,7 @@ async function groqVision(b64, model, key) {
           role: 'user',
           content: [
             { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${b64}` } },
-            { type: 'text', text: 'Beschreibe diese Mahlzeit auf Deutsch in 1-2 Sätzen für ein Ernährungs-Symptomtagebuch. Nenne konkrete Lebensmittel und Mengen wenn erkennbar. Nur die Beschreibung, kein anderer Text.' }
+            { type: 'text', text: 'Was ist auf dem Bild zu essen? Antworte auf Deutsch, kurz und direkt – nur die Lebensmittel mit grober Menge (z.B. "2 Bananen", "eine Schale Reis mit rotem Curry und Gemüse", "ein Cappuccino"). Keine Sätze, keine Erklärungen, keine Aufgabenbeschreibung. Nur die Mahlzeit.' }
           ]
         }],
         max_tokens: 200, temperature: 0.3
